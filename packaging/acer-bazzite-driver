@@ -1,0 +1,89 @@
+#!/usr/bin/bash
+# Build in writable /var; never write to the immutable /usr module tree.
+set -euo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+kernel=$(uname -r)
+base=/var/lib/acer-bazzite-driver
+source_dir=/usr/share/acer-bazzite-driver/source
+key=$base/keys/MOK.priv
+cert=$base/keys/MOK.der
+fail() { echo "acer-bazzite-driver: $*" >&2; exit 1; }
+check() {
+    [[ $(uname -m) == x86_64 ]] || fail 'Only x86_64 Acer laptops are supported.'
+    [[ $(cat /sys/class/dmi/id/sys_vendor) == Acer ]] || fail 'This is not an Acer system.'
+    [[ -f /usr/src/kernels/$kernel/Makefile ]] || fail "Missing headers for $kernel. Install the matching kernel-devel package, then reboot into that kernel."
+    for tool in gcc make modinfo modprobe insmod sha256sum flock; do
+        command -v "$tool" >/dev/null || fail "Missing tool: $tool"
+    done
+    # Lockdown may enforce module signatures independently of Secure Boot.
+    if mokutil --sb-state 2>/dev/null | grep -q 'SecureBoot enabled' ||
+       { [[ -r /sys/kernel/security/lockdown ]] && grep -Eq '\[(integrity|confidentiality)\]' /sys/kernel/security/lockdown; }; then
+        [[ -f $key && -f $cert ]] || fail "Signature enforcement is enabled. Configure and enroll $cert as described in the README."
+        mokutil --test-key "$cert" >/dev/null 2>&1 || fail 'The signing certificate is not enrolled. Complete MOK enrollment and reboot.'
+    fi
+}
+case ${1:-start} in
+    --check) check; echo "Prerequisites available for $kernel"; exit 0 ;;
+    start|--build) ;;
+    *) fail 'Usage: acer-bazzite-driver [--check|--build|start]' ;;
+esac
+[[ $EUID == 0 ]] || fail 'Run with sudo.'
+check
+install -d -m 0755 "$base"
+exec 9>"$base/build.lock"
+flock 9
+build=$base/build/$kernel
+module=$build/src/linuwu_sense.ko
+fingerprint=$({
+    sha256sum "$source_dir/src/linuwu_sense.c" "$source_dir/Makefile"
+    if [[ -f $key && -f $cert ]]; then sha256sum "$cert"; fi
+} | sha256sum | cut -d' ' -f1)
+if [[ ! -f $module || ! -f $build/source.sha256 ]] ||
+   [[ $(cat "$build/source.sha256" 2>/dev/null || true) != "$fingerprint" ]] ||
+   [[ $(modinfo -F vermagic "$module" 2>/dev/null || true) != "$kernel "* ]]; then
+    # Discard previous objects so failed builds cannot reuse stale artifacts.
+    rm -rf "$build"
+    install -d -m 0755 "$build/src"
+    cp "$source_dir/src/linuwu_sense.c" "$build/src/"
+    cp "$source_dir/Makefile" "$build/"
+    make -C "/usr/src/kernels/$kernel" M="$build" -j"$(nproc)" modules
+    if [[ -f $key && -f $cert ]]; then
+        /usr/src/kernels/"$kernel"/scripts/sign-file sha256 "$key" "$cert" "$module"
+    fi
+    echo "$fingerprint" > "$build/source.sha256"
+fi
+restorecon -RF "$build"
+chcon -t modules_object_t "$module"
+[[ ${1:-start} != --build ]] || exit 0
+# Avoid two independent services managing the same module.
+for legacy in linuwu-sense.service linuwu_sense.service; do
+    if systemctl is-active --quiet "$legacy"; then
+        fail "Stop and disable the old $legacy before starting this service."
+    fi
+done
+[[ ! -d /sys/module/linuwu_sense ]] || fail 'linuwu_sense is already loaded. Stop the previous driver before starting this service.'
+# Resolve dependencies before replacing the stock Acer driver.
+for dependency in wmi video sparse-keymap rfkill; do
+    modprobe "$dependency"
+done
+restore_stock() {
+    if [[ -d /sys/module/linuwu_sense ]]; then rmmod linuwu_sense || true; fi
+    modprobe acer_wmi || true
+}
+trap restore_stock ERR
+if [[ -d /sys/module/acer_wmi ]]; then
+    modprobe -r acer_wmi
+fi
+insmod "$module"
+# Only grant access to control attributes; do not change unrelated sysfs files.
+for directory in /sys/devices/platform/acer-wmi/{predator_sense,nitro_sense,four_zoned_kb}; do
+    [[ -d $directory ]] || continue
+    for name in backlight_timeout battery_limiter battery_calibration boot_animation_sound fan_speed lcd_override usb_charging four_zone_mode per_zone_mode; do
+        attribute=$directory/$name
+        [[ -f $attribute ]] || continue
+        chgrp linuwu_sense "$attribute"
+        chmod g+rw "$attribute"
+    done
+done
+echo "Loaded linuwu_sense for $kernel"
+trap - ERR

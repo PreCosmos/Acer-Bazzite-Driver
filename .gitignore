@@ -37,3 +37,6 @@ Thumbs.db
 .vscode/
 .idea/
 *.iml
+
+# Release packages
+/dist/

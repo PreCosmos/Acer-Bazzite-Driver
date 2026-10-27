@@ -1,0 +1,45 @@
+name: Fedora RPMs
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ['44', '45']
+    container:
+      image: registry.fedoraproject.org/fedora:${{ matrix.fedora }}
+    steps:
+      - name: Install build tools
+        run: dnf -y install git rpm-build systemd-rpm-macros gcc make elfutils-libelf-devel kernel-devel shellcheck
+      - uses: actions/checkout@v4
+      - name: Check helpers
+        run: |
+          shellcheck packaging/acer-bazzite-driver packaging/acer-bazzite-driver-stop packaging/build-rpm.sh
+          bash -n packaging/acer-bazzite-driver packaging/acer-bazzite-driver-stop packaging/build-rpm.sh
+      - name: Compile against Fedora kernel
+        run: |
+          mkdir -p /tmp/module/src
+          cp src/linuwu_sense.c /tmp/module/src/
+          printf 'obj-m := src/linuwu_sense.o\n' > /tmp/module/Makefile
+          kdir=$(find /usr/src/kernels -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n1)
+          test -n "$kdir"
+          make -C "$kdir" M=/tmp/module -j2 modules
+      - name: Build binary and source RPM
+        run: |
+          mkdir -p /tmp/rpmbuild/SOURCES dist
+          tar --exclude=.git --exclude=dist --transform='s,^,acer-bazzite-driver-1.0.0/,' -czf /tmp/rpmbuild/SOURCES/acer-bazzite-driver-1.0.0.tar.gz .
+          rpmbuild -ba --define '_topdir /tmp/rpmbuild' packaging/acer-bazzite-driver.spec
+          cp /tmp/rpmbuild/RPMS/noarch/*.rpm /tmp/rpmbuild/SRPMS/*.rpm dist/
+          rpm -qpl dist/*.noarch.rpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fedora-${{ matrix.fedora }}-rpms
+          path: dist/*.rpm

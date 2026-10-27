@@ -1,0 +1,17 @@
+[Unit]
+Description=Acer Bazzite Driver (Linuwu Sense)
+After=local-fs.target systemd-modules-load.service
+Before=display-manager.service
+ConditionVirtualization=!container
+ConditionPathExists=/usr/share/acer-bazzite-driver/source/src/linuwu_sense.c
+
+[Service]
+Type=oneshot
+ExecStartPre=/usr/bin/systemd-sysusers /usr/lib/sysusers.d/acer-bazzite-driver.conf
+ExecStart=/usr/sbin/acer-bazzite-driver start
+ExecStop=/usr/libexec/acer-bazzite-driver-stop
+RemainAfterExit=yes
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

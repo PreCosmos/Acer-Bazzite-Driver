@@ -1,372 +1,150 @@
-# Linuwu Sense
+# Acer Bazzite Driver
 
-**Unofficial Linux kernel module for Acer Predator / Nitro gaming laptops** — RGB keyboard backlight, turbo mode, fan control, battery limiter, and more, reverse-engineered from the official PredatorSense app.
+**A fork of [Linuwu-Sense](https://github.com/0x7375646F/Linuwu-Sense), made specifically to install its Acer laptop driver on immutable Fedora systems, including Bazzite Nvidia Open.**
 
-The code base is still evolving. It's a bit messy in places, but contributions to structure and organize it further are welcome.
+Target: **Acer Predator PHN16S-71**, x86_64, Fedora **44** and **45** based Bazzite images. Other upstream-supported Acer Predator/Nitro models remain in the source, but are not hardware-validated here. This is an unofficial, community driver; neither Acer nor Bazzite maintains this fork.
 
-Inspired by [acer-predator-turbo](https://github.com/JafarAkhondali/acer-predator-turbo-and-rgb-keyboard-linux-module), which has a similar goal, this project was born out of my own challenges. I faced issues detecting the Turbo key and ended up using [acer_wmi](https://github.com/torvalds/linux/blob/master/drivers/platform/x86/acer-wmi.c), but it lacked key features like RGB, custom fan support, battery limiter, and more. As a result, I decided to implement these missing features in my own project.
+[Download RPMs and source RPMs](https://github.com/PreCosmos/Acer-Bazzite-Driver/releases/latest) · [Original usage documentation](README.upstream.md) · [GPL v3 license](LICENSE)
 
-> **⚠️ Use at your own risk.** This driver is independently developed through reverse engineering the official PredatorSense app, without any involvement from Acer. It interacts with low-level WMI methods, which may not be tested across all models.
+## Source and laptop support
 
-## Contents
+This release starts from upstream commit [`4483b6c38b9bb963ac9ada9ca476578e0c63cc08`](https://github.com/0x7375646F/Linuwu-Sense/commit/4483b6c38b9bb963ac9ada9ca476578e0c63cc08). It includes the original PHN16S-71 support from [upstream PR #97](https://github.com/0x7375646F/Linuwu-Sense/pull/97), by **alltern**:
 
-- [Installation](#-installation)
-- [Usage](#️-usage)
-  - [Thermal Profiles](#0-thermal-profiles-nitro-users-especially-who-dont-have-switch-key-)
-  - [Backlight Timeout](#1-backlight-timeout-)
-  - [Battery Calibration](#2-battery-calibration-)
-  - [Battery Limiter](#3-battery-limiter-)
-  - [Boot Animation Sound](#4-boot-animation-sound-)
-  - [Fan Speed](#5-fan-speed--️)
-  - [LCD Override](#6-lcd-override-️)
-  - [USB Charging](#7-usb-charging-)
-  - [Turbo State & OSD Popup](#8-turbo-state-)
-- [Keyboard Configuration](#-keyboard-configuration)
-- [GUI Frontends](#gui)
-- [Troubleshooting](#-troubleshooting)
-- [Roadmap](#-roadmap)
-- [License](#license)
-- [Donations](#-donations)
+- [`6bee3af6f02d8adc00c1f70a88b8add0beaf29a8`](https://github.com/0x7375646F/Linuwu-Sense/commit/6bee3af6f02d8adc00c1f70a88b8add0beaf29a8): recognize `Acer` / `Predator PHN16S-71` through DMI.
+- [`53e3eb37386635a1b68ad0e772df6f7fdff710dd`](https://github.com/0x7375646F/Linuwu-Sense/commit/53e3eb37386635a1b68ad0e772df6f7fdff710dd): select the model quirk with Predator v4 and four-zone keyboard capabilities.
 
-## 🚀 Installation
+These commits are already merged upstream and are retained in this fork's history. This fork adds the immutable Fedora RPM packaging and service. It preserves upstream authorship and GPL licensing. The original README is retained as `README.upstream.md`; its `make install` instructions are **not** the installation method for this package.
 
-**Requirements:** Linux headers matching your running kernel, and `dkms`. Tested on kernel versions 6.12, 6.13 ([previous code base](https://github.com/0x7375646F/Linuwu-Sense/tree/v6.13)), and 6.14 (zen).
+## What the RPM installs
 
-Identify your current kernel version:
-```bash
-uname -r
-```
+The `acer-bazzite-driver` RPM ships driver **source**, helpers, and a systemd service. It builds a kernel-specific `linuwu_sense.ko` in `/var/lib/acer-bazzite-driver/build/<kernel>/`, then loads it from that writable location. It does not install a precompiled module into immutable `/usr/lib/modules`, run DKMS, alter the Nvidia driver, or rebase your Bazzite image.
 
-Install headers and `dkms`:
-```bash
-# Arch Linux
-sudo pacman -S linux-headers dkms
+There are separate `.fc44.noarch.rpm` and `.fc45.noarch.rpm` assets built inside the corresponding Fedora containers. `noarch` describes the source/service payload: **the actual driver supports x86_64 only**. Select the RPM matching `VERSION_ID` in `/etc/os-release`. The two RPMs are alternatives, not packages to install together.
 
-# Debian / Ubuntu
-sudo apt install linux-headers-$(uname -r) dkms
-```
+The service rebuilds when the running kernel or packaged source changes. It requires the exact kernel's development tree at `/usr/src/kernels/$(uname -r)`. The RPM depends on `kernel-devel`, GCC, make, libelf development files, kmod, mokutil, OpenSSL, SELinux tools, systemd, and util-linux. A generic Fedora kernel-devel package cannot substitute for headers matching Bazzite's custom kernel. Bazzite Nvidia Open commonly includes its matching development package; check before installing.
 
-Clone the repository and build/install the module:
-```bash
-git clone https://github.com/0x7375646F/Linuwu-Sense.git
-cd Linuwu-Sense
-sudo make install
-```
+On start, the service builds first, unloads `acer_wmi`, and loads `linuwu_sense`. If loading fails, it attempts to restore `acer_wmi`. On stop it unloads `linuwu_sense` and restores `acer_wmi`. No persistent `acer_wmi` blacklist is installed. The service does not choose Turbo mode, change fan settings, or set a power profile. Device features and any firmware side effects remain those of the upstream driver.
 
-`make install` will:
-1. Blacklist the in-kernel `acer_wmi` module (which otherwise conflicts with this driver).
-2. Register `linuwu_sense` with **DKMS** and build/install it for your running kernel.
-3. Load the module and configure it to auto-load on every boot.
-4. Set up a `linuwu_sense` group and sysfs permissions so you don't need `sudo` for everyday use.
+## Install on Bazzite Nvidia Open
 
-Because the module is registered with DKMS, it is **automatically rebuilt whenever your kernel is upgraded** — you do not need to re-run `make install` after every kernel update. Verify at any time with:
-```bash
-dkms status
-```
+1. Check the base Fedora version and the running kernel:
 
-To uninstall:
-```bash
-sudo make uninstall
-```
+   ```bash
+   cat /etc/os-release
+   uname -r
+   test -f "/usr/src/kernels/$(uname -r)/Makefile" && echo 'Matching kernel headers found'
+   mokutil --sb-state
+   ```
 
-## 🛠️ Usage
+   If headers are missing, obtain the **exact matching kernel-devel** from the same kernel repository/image as your Bazzite kernel. If you have a pending system update, reboot first and recheck. Do not point the build at another kernel version.
 
-Thermal profiles can be switched with a single click. For battery mode, choose between Eco and Balanced; when plugged into AC, choose Quiet, Balanced, Performance, or Turbo. Each profile is remembered separately for battery and AC power, and the thermal/fan settings adjust automatically based on your current power source.
+2. Download the matching RPM and `SHA256SUMS` from the release. In the download directory, verify the RPM's hash against its entry in `SHA256SUMS`, for example:
 
-For **Predator** laptops, the following path is used: `/sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense`
+   ```bash
+   sha256sum acer-bazzite-driver-1.0.0-1.fc44.noarch.rpm
+   grep 'acer-bazzite-driver-1.0.0-1.fc44.noarch.rpm$' SHA256SUMS
+   ```
 
-For **Nitro** laptops, the following path is used: `/sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/nitro_sense`
+   These initial RPMs are not signed with a repository GPG key; the checksums detect corruption but are not an independent publisher signature.
 
-`predator_sense` includes all features except the custom boot logo. `four_zoned_kb` provides RGB support for four-zone keyboards (no per-key RGB support). Here's how to interact with the sysfs files in these directories:
+3. Layer the RPM on the **host**, not inside Distrobox/Toolbox. For Fedora 44:
 
-### **0. Thermal Profiles (Nitro users especially who don't have switch key) 🚀**
+   ```bash
+   sudo rpm-ostree install ./acer-bazzite-driver-1.0.0-1.fc44.noarch.rpm
+   systemctl reboot
+   ```
 
-Some Acer Nitro laptops don't have a thermal profile switch button, so it must be set manually:
+   For Fedora 45, substitute `acer-bazzite-driver-1.0.0-1.fc45.noarch.rpm`. Bazzite's [package layering documentation](https://docs.bazzite.gg/Installing_and_Managing_Software/rpm-ostree/) explains why a reboot is required.
 
-To probe the current thermal profile:
-```bash
-cat /sys/firmware/acpi/platform_profile
-```
+4. After reboot, configure Secure Boot below if enabled, then explicitly start the driver:
 
-To check the supported thermal profiles:
-```bash
-cat /sys/firmware/acpi/platform_profile_choices
-```
+   ```bash
+   sudo acer-bazzite-driver --check
+   sudo systemctl enable --now acer-bazzite-driver.service
+   systemctl status acer-bazzite-driver.service --no-pager
+   lsmod | grep -E 'linuwu_sense|acer_wmi'
+   ```
 
-To switch the platform profile (replace `balanced` with a supported profile):
-```bash
-echo balanced | sudo tee /sys/firmware/acpi/platform_profile
-```
+   The first start compiles the module; allow several minutes. Installation alone does **not** enable or load it. A failed prerequisite check leaves the stock driver in place.
 
-### **1. Backlight Timeout ⏰**
+5. Optional: grant your account access to the supported sysfs controls:
 
-Turns off the keyboard RGB after 30 seconds of idle mode.
+   ```bash
+   sudo usermod -aG linuwu_sense "$USER"
+   ```
 
-| Value | Meaning |
-|---|---|
-| `0` | Disabled |
-| `1` | Enabled |
+   Log out and back in. Root can use the controls without group membership. There is no bundled GUI. Upstream's optional GUIs are separate projects.
+
+## Secure Boot and kernel lockdown
+
+The release does not contain a private signing key. With Secure Boot or enforcing kernel lockdown, you must create a local key, enroll its certificate, and sign locally. Bazzite's built-in certificate does not automatically trust this custom module.
 
 ```bash
-# Check
-cat /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/backlight_timeout
-
-# Set
-echo 1 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/backlight_timeout
+sudo install -d -m 0700 /var/lib/acer-bazzite-driver/keys
+sudo openssl req -new -x509 -newkey rsa:3072 -nodes -days 3650 \
+  -subj '/CN=Acer Bazzite Driver local module/' \
+  -keyout /var/lib/acer-bazzite-driver/keys/MOK.priv \
+  -outform DER -out /var/lib/acer-bazzite-driver/keys/MOK.der
+sudo chmod 0600 /var/lib/acer-bazzite-driver/keys/MOK.priv
+sudo mokutil --import /var/lib/acer-bazzite-driver/keys/MOK.der
+systemctl reboot
 ```
 
-### **2. Battery Calibration 🔋**
+Complete enrollment in the firmware MOK manager using the temporary password you chose. After reboot, run `sudo acer-bazzite-driver --check` and start the service. The helper uses the kernel's `scripts/sign-file` before loading the module. Never upload or share `MOK.priv`. Systems without working MOK enrollment need their own supported kernel trust mechanism. Secure Boot operation has not been hardware-tested for this release.
 
-Calibrates your battery to provide a more accurate percentage reading: charges to 100%, drains to 0%, then recharges to 100%. **Do not unplug the laptop from AC power during calibration.**
+## Existing Linuwu Sense installations
 
-| Value | Meaning |
-|---|---|
-| `1` | Start calibration |
-| `0` | Stop calibration |
+Disable and remove any previous `linuwu-sense.service` or `linuwu_sense.service` before enabling this package. Do not run two loaders together. Remove old dedicated module-load/blacklist configuration only if it belongs to that previous installation. An old module loaded with `insmod` may need `sudo rmmod linuwu_sense`, since it is not indexed under `/usr/lib/modules`.
+
+The earlier local installation on the target laptop used `/etc/systemd/system/linuwu-sense.service` and `/var/lib/linuwu-sense`. Those paths are distinct from this package's service and state directory. Package installation does not silently delete a previous setup.
+
+## Controls and troubleshooting
+
+Read [upstream usage](README.upstream.md) for thermal profiles, battery charge limiting, fans, and keyboard controls. Available files depend on the firmware and model. Typical paths are:
+
+- `/sys/firmware/acpi/platform_profile` and `platform_profile_choices`
+- `/sys/devices/platform/acer-wmi/predator_sense/`
+- `/sys/devices/platform/acer-wmi/four_zoned_kb/`
+
+Four-zone flags do not guarantee working RGB on every keyboard controller revision. Per-key RGB and ENEK5130 hardware may need other drivers. Fan and battery controls call reverse-engineered firmware methods: use settings appropriate to your hardware. A successful compile is not proof every control works.
 
 ```bash
-# Check
-cat /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/battery_calibration
-
-# Set
-echo 1 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/battery_calibration
+sudo journalctl -u acer-bazzite-driver.service -b --no-pager
+sudo dmesg | grep -Ei 'linuwu|acer|verification|key rejected'
+sudo acer-bazzite-driver --check
 ```
 
-### **3. Battery Limiter ⚡**
+Missing headers: obtain matching development files. `Key was rejected`: complete certificate enrollment. `Module in use`: stop the previous loader and close consumers of its devices; reboot if necessary. SELinux remains enabled; the helper labels the built module `modules_object_t` before loading. Do not disable SELinux to work around an uninvestigated denial.
 
-Limits battery charging to 80%, preserving battery health for laptops primarily used while plugged into AC power.
+## Updates and removal
 
-| Value | Meaning |
-|---|---|
-| `1` | Enabled |
-| `0` | Disabled |
+A kernel update triggers a fresh build at the next service start, provided matching headers are installed. An upstream kernel API change can still require a driver update. Cached builds remain in `/var` and may be removed while the service is stopped. Locally layered release RPMs do **not** automatically receive project updates. Install a later RPM with `rpm-ostree` and reboot. Before changing between Fedora 44 and 45, uninstall this local RPM, complete the OS upgrade, then layer the matching release asset.
+
+To restore the stock Acer driver and remove the package:
 
 ```bash
-# Check
-cat /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/battery_limiter
-
-# Set
-echo 1 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/battery_limiter
+sudo systemctl disable --now acer-bazzite-driver.service
+sudo rpm-ostree uninstall acer-bazzite-driver
+systemctl reboot
 ```
 
-### **4. Boot Animation Sound 🎶**
-
-Enables or disables the custom boot animation and sound.
-
-| Value | Meaning |
-|---|---|
-| `1` | Enabled |
-| `0` | Disabled |
+After reboot, optional state/group cleanup:
 
 ```bash
-# Check
-cat /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/boot_animation_sound
-
-# Set
-echo 0 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/boot_animation_sound
+sudo rm -rf /var/lib/acer-bazzite-driver
+sudo gpasswd -d "$USER" linuwu_sense
+sudo groupdel linuwu_sense
 ```
 
-### **5. Fan Speed 🌬️**
+Only remove the group if no other Linuwu installation uses it. Removing the state directory also removes any local signing key; retain a secure backup first if desired. Enrolled MOK certificates are not automatically deleted; manage them through `mokutil` if no longer needed.
 
-Controls the CPU and GPU fan speeds.
+## Build and validation
 
-| Value | Meaning |
-|---|---|
-| `0` | Auto |
-| `1` | Minimum fan speed (not recommended) |
-| `100` | Maximum fan speed |
-| other | Any value in between, e.g. `50`, `55`, `70` |
-
-Example (set CPU to 50 and GPU to 70):
-```bash
-echo 50,70 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/fan_speed
-```
-
-### **6. LCD Override 🖥️**
-
-Reduces LCD latency and minimizes ghosting.
-
-| Value | Meaning |
-|---|---|
-| `1` | Enabled |
-| `0` | Disabled |
+From a checkout, with Podman installed:
 
 ```bash
-# Check
-cat /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/lcd_override
-
-# Set
-echo 1 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/lcd_override
+packaging/build-rpm.sh 44
+packaging/build-rpm.sh 45
 ```
 
-### **7. USB Charging ⚡**
-
-Allows the USB charging port to provide power even when the laptop is off.
-
-| Value | Meaning |
-|---|---|
-| `0` | Disabled |
-| `10` | Provides power until battery reaches 10% |
-| `20` | Provides power until battery reaches 20% |
-| `30` | Provides power until battery reaches 30% |
-
-```bash
-# Check
-cat /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/usb_charging
-
-# Set
-echo 20 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/usb_charging
-```
-
-### **8. Turbo State 🌀**
-
-Read-only attribute exposing the current turbo hotkey state, for laptops that use the turbo-toggle fan mechanism (e.g. Predator PH315-53 / PH315-52) instead of the `predator_sense` / `nitro_sense` thermal-profile interface.
-
-| Value | Meaning |
-|---|---|
-| `0` | Auto fan mode |
-| `1` | Turbo fan mode |
-
-```bash
-cat /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/turbo_sense/turbo_state
-```
-
-The driver calls `sysfs_notify()` on this file every time the turbo hotkey is toggled, so userspace can `poll()` on it instead of polling in a loop. This is what powers the **Turbo OSD** popup below.
-
-#### Turbo OSD popup 🟢⚪
-
-`osd/linuwu_turbo_osd.py` is a small GTK3 script that shows a transient grey/green popup at the top of the screen for 3 seconds whenever turbo mode is toggled on or off. It blocks on `turbo_state` rather than polling, so it uses no CPU while idle.
-
-Requirements: `python3-gi` with GTK 3 (`sudo apt install python3-gi gir1.2-gtk-3.0` on Debian/Ubuntu/Mint) — install this *before* `sudo make install` so the popup can start immediately.
-
-On hardware where `turbo_sense` exists (e.g. PH315-53 / PH315-52), `sudo make install` automatically installs `linuwu_turbo_osd.py` to `~/.local/share/linuwu-sense/`, installs the systemd `--user` unit to `~/.config/systemd/user/`, and runs `systemctl --user enable --now linuwu-turbo-osd.service` for you — no manual steps needed.
-
-Check it's running with `systemctl --user status linuwu-turbo-osd.service`. If it shows as enabled but not started, log out and back in (there was no active graphical session at install time) or start it manually:
-```bash
-systemctl --user start linuwu-turbo-osd.service
-```
-
-To try the popup directly without the service:
-```bash
-python3 osd/linuwu_turbo_osd.py
-```
-
-## 💻 Keyboard Configuration
-
-### Directory: `four_zoned_kb`
-
-The `four_zoned_kb` directory contains two sysfs files that control the RGB backlight behavior of the four-zone keyboard:
-
-1. **`four_zone_mode`**
-2. **`per_zone_mode`**
-
-#### Per-Zone Mode (`per_zone_mode`) 🎨
-
-Sets a specific RGB color for each of the four keyboard zones individually. Each zone is an RGB value in hex (e.g. `4287f5`, where `42` is Red, `87` is Green, `f5` is Blue).
-
-- The file accepts four color parameters (one per zone) plus a brightness value, all comma-separated.
-- Each color parameter is in the format `RRGGBB`.
-
-Set all four zones to the same color and full brightness:
-```bash
-echo 4287f5,4287f5,4287f5,4287f5,100 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/four_zoned_kb/per_zone_mode
-```
-
-Set each zone to a unique color:
-```bash
-echo 4287f5,ff5733,33ff57,ff33a6,100 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/four_zoned_kb/per_zone_mode
-```
-
-Reading (`cat`) the file returns the current values in the same format: `4287f5,4287f5,4287f5,4287f5,100`.
-
-#### Four-Zone Mode (`four_zone_mode`) ✨
-
-Controls advanced RGB effects for the keyboard. Takes seven comma-separated parameters:
-
-| Parameter | Range | Meaning |
-|---|---|---|
-| Mode | 0–7 | Lighting effect type (see table below) |
-| Speed | 0–9 | Speed of the effect (if applicable) |
-| Brightness | 0–100 | Intensity of the lighting effect |
-| Direction | 1–2 | `1` = right to left, `2` = left to right |
-| Red | 0–255 | |
-| Green | 0–255 | |
-| Blue | 0–255 | |
-
-Modes:
-
-| Mode | Name | Notes |
-|---|---|---|
-| 0 | Static | Fixed color, no animation |
-| 1 | Breathing | Color fades in and out |
-| 2 | Neon | Fixed neon glow (black), direction ignored |
-| 3 | Wave | Color transitions across the keyboard |
-| 4 | Shifting | Full control over speed, direction, and color |
-| 5 | Zoom | Direction ignored |
-| 6 | Meteor | Direction ignored |
-| 7 | Twinkling | Direction ignored |
-
-Example — Neon Mode, speed 1, full brightness, top-to-bottom:
-```bash
-echo 3,1,100,2,0,0,0 | sudo tee /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/four_zoned_kb/four_zone_mode
-```
-`3` Neon Mode · `1` Speed · `100` Full brightness · `2` Direction (top to bottom) · `0,0,0` Black (ignored by Neon)
-
-Thermal and fan profiles are saved and reloaded on every reboot, so your settings persist across restarts.
-
-### **⚠️ Note for 2025+ models (ENEK5130 keyboards)**
-
-On some newer Acer laptops the keyboard RGB is no longer wired to the WMI interface this module uses. On these machines both `per_zone_mode` and `four_zone_mode` accept your writes without any error, but the LEDs never change and the keyboard stays on its firmware default wave. Confirmed affected so far: Predator Helios Neo 16S AI (PHN16S-71) and Nitro ANV16S-41. On the Predator Helios Neo 16 (PHN16-73) the dynamic effects still work over WMI but static colors do not.
-
-The RGB on these models is handled by a separate ENE KB5130 controller on i2c-HID. You can check whether your laptop has it:
-
-```bash
-grep -l ENEK5130 /sys/class/hidraw/*/device/uevent
-```
-
-If that prints a path, keyboard RGB on your machine works through HID feature reports on that hidraw device instead of this module. The protocol and a standalone userspace tool are documented at [kbrgb](https://github.com/shwetankg07/kbrgb) (see its `PROTOCOL.md`). Everything else in Linuwu-Sense (fans, thermal profiles, battery limiter and so on) still works normally on these models, so the two can be used side by side.
-
-
-## GUI
-
-- [Div Acer Manager Max by PXDiv](https://github.com/PXDiv/Div-Acer-Manager-Max)
-- [GUI LinuwuSense by KumarVivek](https://github.com/kumarvivek1752/Linuwu-Sense-GUI/tree/main)
-- [RuSense by r3nv-dev](https://github.com/r3nv-dev/rusense) — Rust TUI + GUI (Tauri)
-
-## 🩺 Troubleshooting
-
-**Turbo/hotkeys stopped working after a reboot, or nothing under `/sys/module/linuwu_sense` exists anymore.**
-This almost always means the kernel was upgraded and the module was never rebuilt for the new kernel. Check what's actually loaded:
-```bash
-uname -r                 # kernel you're running now
-dkms status               # should list linuwu_sense as "installed" for that kernel
-lsmod | grep linuwu_sense
-```
-If `dkms status` doesn't show your current kernel, DKMS wasn't able to rebuild it automatically (e.g. it was installed before this project switched to DKMS, or the rebuild failed). Re-run `sudo make install` from the repo to fix it, then confirm `dkms status` lists your running kernel next time.
-
-**Pressing the turbo key does nothing, and `dmesg` shows nothing either.**
-Confirm the module is actually loaded and receiving the key (`sudo dmesg | grep -i turbo` while pressing the key should print `pressed turbo button - N`). If a press is logged but nothing happens, check `dmesg` for a `linuwu_sense: Failed to ...` error — the driver logs a `pr_err` whenever the underlying WMI call to read or set the turbo LED fails, so a firmware/EC-level failure will now show up there instead of failing silently.
-
-**The Turbo OSD popup never appears.**
-`sudo make install` installs and enables `linuwu-turbo-osd.service` automatically on hardware with `turbo_sense`. Check whether it's actually running:
-```bash
-systemctl --user status linuwu-turbo-osd.service
-```
-If the unit isn't found, either your hardware wasn't detected as turbo-capable at install time, or `python3-gi`/GTK 3 wasn't installed yet (see [Turbo OSD popup](#turbo-osd-popup-)) — re-run `sudo make install` after installing it. If it's enabled but not running, there was no active graphical session at install time; log back in or run `systemctl --user start linuwu-turbo-osd.service`. If it's running but still silent, confirm the sysfs file it watches exists and updates: `cat /sys/module/linuwu_sense/drivers/platform:acer-wmi/acer-wmi/turbo_sense/turbo_state` should flip between `0`/`1` as you press the key.
-
-## 🚧 Roadmap
-
-- [x] GUI for keyboard RGB controls to make it noob-friendly.
-- [x] Module persistence after reboot (via DKMS, surviving kernel upgrades too).
-- [ ] Custom boot logo feature support.
-- [ ] More device support — currently only PHN16-71 is fully supported.
-
-## License
-
-GNU General Public License v3
-
-## 💖 Donations
-
-Donations are completely optional but show your love for open-source development and motivate me to add more features to this project!
-
-USDT (BEP20 - BNB Smart Chain): `0xDA7aa42B9Fc3041F20f4Ec828A70E9bDD54A6822`
+Binary and source RPMs are written to `dist/`. The GitHub Actions workflow builds both variants and compiles the source against each Fedora container's available kernel development tree. Release notes record the checks actually completed. The initial release additionally compiled on the target laptop against `7.2.11-ogc4.1.fc44.x86_64`; BTF was skipped because the kernel's `vmlinux` was unavailable. **Live RPM installation, post-reboot behavior, hardware controls, and Secure Boot remain for the user to test. Fedora 45 Bazzite hardware operation is not claimed as tested.**
